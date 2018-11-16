@@ -33,8 +33,8 @@ Adafruit_FONA fona = Adafruit_FONA(FONA_RST);
 /************************* Adafruit.io Setup *********************************/
 #define AIO_SERVER      "io.adafruit.com"
 #define AIO_SERVERPORT  1883
-#define AIO_USERNAME    "spencer_g"
-#define AIO_KEY         "b43d66167fcc4c06829895f2ba0f5f2c"
+#define AIO_USERNAME    "sarmavrudhula"
+#define AIO_KEY         "1c81409abf1c46b1af79cbdfec6a2e83"
 
 // Setup the FONA MQTT class by passing in the FONA class and MQTT server and login details.
 Adafruit_MQTT_FONA mqtt(&fona, AIO_SERVER, AIO_SERVERPORT, AIO_USERNAME, AIO_KEY);
@@ -46,16 +46,12 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
 /*************************** MQTT Feeds **************************************/
 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
-Adafruit_MQTT_Publish airDataPM1_0 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-pm-1-0");
-Adafruit_MQTT_Publish airDataPM2_5 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-pm-2-5");
-Adafruit_MQTT_Publish airDataPM10 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-pm-10");
-Adafruit_MQTT_Publish airDataN1_0 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-n-1-0");
-Adafruit_MQTT_Publish airDataN2_5 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-n-2-5");
-Adafruit_MQTT_Publish airDataN10 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-n-10");
-Adafruit_MQTT_Publish humidityFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/humidity");
-Adafruit_MQTT_Publish temperatureFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/temperature");
-Adafruit_MQTT_Publish batteryFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/battery");
-Adafruit_MQTT_Publish badDataFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/baddata");
+Adafruit_MQTT_Publish airDataPM2_5 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-pm-2-5/csv");
+Adafruit_MQTT_Publish airDataPM10 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/airdata-pm-10/csv");
+Adafruit_MQTT_Publish humidityFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/humidity/csv");
+Adafruit_MQTT_Publish temperatureFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/temperature/csv");
+Adafruit_MQTT_Publish batteryFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/battery/csv");
+Adafruit_MQTT_Publish badDataFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/baddata/csv");
 
 /*************************** Sketch Code ************************************/
 
@@ -63,22 +59,25 @@ Adafruit_MQTT_Publish badDataFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/
 uint8_t txfailures = 0;
 #define MAXTXFAILURES 3
 
+//timing variables for transmission
 unsigned long previousMillis;
 unsigned long currentMillis;
-#define triggerWidth  2000
-#define stabilizer  45000
-#define transmitThreshold  10
-#define transmitFrequency  5 * 60 * 1000
-#define percentAllowed  0.05
-#define inconsistenciesAllowed  2
-
+#define triggerWidth  2000  //time in between measurements of Particulate Mass
+#define stabilizer  45000   //time it takes for air sensors to stabilize readings
+#define transmitFrequency  5 * 60 * 1000   //time in between transmits
 long prevTrigger = stabilizer;
 long prevTransmit = 0;
+
+//variables for averaging sensor readings
+#define transmitThreshold  10 //number of data points to be averaged per transmission
+#define percentAllowed  0.05  //allowable difference between 2 air sensor reading values before data is marked as bad
+#define inconsistenciesAllowed  2  //number of bad data points in an average before the entire average is thrown out.
 float averages[14];
-bool sensorsAwake = false;
 bool dataFlag = false;
 uint8_t dataInAvg = 0;
 uint8_t inconsistentCount = 0;
+
+bool sensorsAwake = false; // used to see if sensors are active or in power save mode
 
 void handleSerial() {
   byte incomingChar = Serial.read();
@@ -139,8 +138,13 @@ void setup() {
   delay(2500);  // wait a few seconds to stabilize connection
 
   Serial.print(F("Turning on GPS..."));
+  float latitude, longitude, speed, heading, altitude;
   fona.enableGPS(true);
   Serial.println(F("done"));
+  while(!fona.getGPS(&latitude, &longitude, &speed, &heading, &altitude)){
+    Serial.println(F("no gps fix... wait 5 sec"));
+    delay(5000);
+  }
 
   //setup air sensors
   pinMode(air1Tx, OUTPUT);
@@ -195,11 +199,19 @@ void loop() {
   
   if(sensorsAwake && currentMillis - prevTrigger >= triggerWidth){
     prevTrigger = currentMillis;
-    doStuff();
+    readSensors();
+    addToAverage();
+    if(dataInAvg == transmitThreshold){
+      sensorSleep();
+      for(int8_t i = 0; i < 14; i++){
+        averages[i] = averages[i] / (float)dataInAvg;
+      }
+      sendDataToServer();
+    }
   }
 }
 
-void doStuff(){
+void readSensors(){
   Serial.print(F("\nProgram running for "));
   Serial.print(millis() / 1000);
   Serial.println(F(" seconds."));
@@ -247,7 +259,6 @@ void doStuff(){
       break;
   }
   inconsistentCount += compareAirSensors(dataDiff);
-  addToAverage();
   if(inconsistentCount > inconsistenciesAllowed){
     dataFlag = true;
   }
@@ -293,22 +304,16 @@ void addToAverage(){
   averages[12] += HUMI.humidity;
   averages[13] += HUMI.temperature;
   dataInAvg++;
+}
   
-  if(dataInAvg == transmitThreshold){
-    sensorSleep();
-    for(int8_t i = 0; i < 14; i++){
-      averages[i] = averages[i] / (float)dataInAvg;
-    }
-    sendDataToServer();
-
-    //reset averages and tracking variables
-    for(int8_t i = 0; i < 14; i++){
-      averages[i] = 0;
-    }
-    dataInAvg = 0;
-    inconsistentCount = 0;
-    dataFlag = false;
+void resetVars(){
+  //reset averages and tracking variables
+  for(int8_t i = 0; i < 14; i++){
+    averages[i] = 0;
   }
+  dataInAvg = 0;
+  inconsistentCount = 0;
+  dataFlag = false;
 }
 
 void sendDataToServer(){
@@ -316,9 +321,6 @@ void sendDataToServer(){
     fonaSS.listen();
   }
   prevTransmit = millis();
-  int vBatt;
-  fona.getBattPercent(&vBatt);
-  unsigned long battSend = vBatt;
 
   //start debug printing
   Serial.println(F("\nFollowing are averages collected over the past 30 sec."));
@@ -330,55 +332,105 @@ void sendDataToServer(){
     Serial.print(F("False "));
   }
   Serial.println(inconsistentCount);
-  Serial.print(F("PMS 1.0: "));
-  Serial.println(averages[0], 2);
-  Serial.print(F("PMS 2.5: "));
-  Serial.println(averages[1], 2);
-  Serial.print(F("PMS 10: "));
-  Serial.println(averages[2], 2);
-  Serial.print(F("PMS 1.0 (AE): "));
-  Serial.println(averages[3], 2);
   Serial.print(F("PMS 2.5 (AE): "));
   Serial.println(averages[4], 2);
   Serial.print(F("PMS 10 (AE): "));
   Serial.println(averages[5], 2);
-  Serial.print(F("Bin 0.3: "));
-  Serial.println(averages[6], 2);
-  Serial.print(F("Bin 0.5: "));
-  Serial.println(averages[7], 2);
-  Serial.print(F("Bin 1.0: "));
-  Serial.println(averages[8], 2);
-  Serial.print(F("Bin 2.5: "));
-  Serial.println(averages[9], 2);
-  Serial.print(F("Bin 5.0: "));
-  Serial.println(averages[10], 2);
-  Serial.print(F("Bin 10: "));
-  Serial.println(averages[11], 2);
   Serial.print(F("Humidity: "));
   Serial.println(averages[12], 2);
   Serial.print(F("Temperature: "));
   Serial.println(averages[13], 2);
   //end debug printing
-  MQTT_connect();
-  
+
+  float latitude, longitude, speed, heading, altitude;
+  int vBatt;
+  fona.getBattPercent(&vBatt);
+  fona.getGPS(&latitude, &longitude, &speed, &heading, &altitude);
+  bool dataSent;
+
+  String commaSpace = ", ";
+  String latStr = String(latitude, 5);
+  String longStr = String(longitude, 5);
+  String altStr = String(altitude, 2);
+  String gpsStr = commaSpace + latStr + commaSpace + longStr + commaSpace + altStr;
+  delete &commaSpace;
+  delete &latStr;
+  delete &longStr;
+  delete &altStr;
+
+  String badData;
   if(dataFlag){
-    badDataFeed.publish(1.0);
-    return;
+    badData = String(1);
   }
   else{
-    badDataFeed.publish(0.0);
+    badData = String(0);
+  }
+  badData += gpsStr;
+  unsigned int len = badData.length();
+  char badDataMsg[len];
+  badData.toCharArray(badDataMsg, len);
+  delete &badData;
+  MQTT_connect();
+  badDataFeed.publish(badDataMsg);
+  delete badDataMsg;
+  if(dataFlag){
+    return;
   }
   
-  if(!airDataPM1_0.publish(averages[3], 2) ||
-     !airDataPM2_5.publish(averages[4], 2) ||
-     !airDataPM10.publish(averages[5], 2) ||
-     !airDataN1_0.publish(averages[8], 2) ||
-     !airDataN2_5.publish(averages[9], 2) ||
-     !airDataN10.publish(averages[11], 2) ||
-     !humidityFeed.publish(averages[12], 2) ||
-     !temperatureFeed.publish(averages[13], 2)
-  ){
-    Serial.println(F("Air Data failed to publish"));
+  String pm25Str = String(averages[4], 2);
+  pm25Str += gpsStr;
+  len = pm25Str.length();
+  char pm25Msg[len];
+  pm25Str.toCharArray(pm25Msg, len);
+  delete &pm25Str;
+  MQTT_connect();
+  dataSent = airDataPM2_5.publish(pm25Msg);
+  delete pm25Msg;
+  
+  String pm10Str = String(averages[5], 2);
+  pm10Str += gpsStr;
+  len = pm10Str.length();
+  char pm10Msg[len];
+  pm10Str.toCharArray(pm10Msg, len);
+  delete &pm10Str;
+  MQTT_connect();
+  dataSent = airDataPM10.publish(pm10Msg) && dataSent;
+  delete pm10Msg;
+  
+  String humiStr = String(averages[12], 2);
+  humiStr += gpsStr;
+  len = humiStr.length();
+  char humiMsg[len];
+  humiStr.toCharArray(humiMsg, len);
+  delete &humiStr;
+  MQTT_connect();
+  dataSent = humidityFeed.publish(humiMsg) && dataSent;
+  delete humiMsg;
+    
+  String tempStr = String(averages[13], 2);
+  tempStr += gpsStr;
+  len = tempStr.length();
+  char tempMsg[len];
+  tempStr.toCharArray(tempMsg, len);
+  delete &tempStr;
+  MQTT_connect();
+  dataSent = temperatureFeed.publish(tempMsg) && dataSent;
+  delete tempMsg;
+  
+  String battStr = String(vBatt);
+  battStr += gpsStr;
+  len = battStr.length();
+  char battMsg[len];
+  battStr.toCharArray(battMsg, len);
+  delete &battStr;
+  MQTT_connect();
+  dataSent = batteryFeed.publish(battMsg) && dataSent;
+  delete battMsg;
+
+  delete &gpsStr;
+  
+  if(!dataSent){
+    Serial.println(F("Data failed to publish"));
     txfailures++;
     if (txfailures >= MAXTXFAILURES) {
       Serial.println(F("Resetting Cellular"));
@@ -387,22 +439,8 @@ void sendDataToServer(){
     }
   } 
   else {
-    Serial.println(F("Sent Air Data!"));
+    Serial.println(F("Sent Data!"));
     txfailures = 0;
   }  
-
-  if (! batteryFeed.publish(battSend)) {
-    Serial.println(F("Failed to publish battery level"));
-    txfailures++;
-    if (txfailures >= MAXTXFAILURES) {
-      Serial.println(F("Resetting Cellular"));
-      FONAconnect(F(FONA_APN), F(FONA_USERNAME), F(FONA_PASSWORD));
-      txfailures = 0;
-    }
-  } 
-  else {
-    Serial.println(F("SENT Battery Level!"));
-    txfailures = 0;        
-  }
 }
 
