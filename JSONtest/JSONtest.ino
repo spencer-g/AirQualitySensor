@@ -46,12 +46,7 @@ boolean FONAconnect(const __FlashStringHelper *apn, const __FlashStringHelper *u
 /*************************** MQTT Feeds **************************************/
 
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
-Adafruit_MQTT_Publish airDataPM2_5 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/pm-25/csv");
-Adafruit_MQTT_Publish airDataPM10 = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/pm-10/csv");
-Adafruit_MQTT_Publish humidityFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/humidity/csv");
-Adafruit_MQTT_Publish temperatureFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/temperature/csv");
-Adafruit_MQTT_Publish batteryFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/battery/csv");
-Adafruit_MQTT_Publish badDataFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/bad-data/csv");
+Adafruit_MQTT_Publish airData = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/air-data/json");
 
 /*************************** Sketch Code ************************************/
 
@@ -344,109 +339,95 @@ void sendDataToServer(){
   //end debug printing
 
   float latitude, longitude, speed, heading, altitude;
-  uint16_t vBatt;
-  fona.getBattPercent(&vBatt);
+  uint16_t percentBatt;
+  fona.getBattPercent(&percentBatt);
   fona.getGPS(&latitude, &longitude, &speed, &heading, &altitude);
-  bool dataSent;
 
-  String commaSpace = ", ";
-  String latStr = String(latitude, 5);
-  String longStr = String(longitude, 5);
-  String altStr = String(altitude, 2);
-  String gpsStr = commaSpace + latStr + commaSpace + longStr + commaSpace + altStr;
-  delete &commaSpace;
-  delete &latStr;
-  delete &longStr;
-  delete &altStr;
-
-  String dataStr;
-  if(dataFlag){
-    dataStr = String(1);
+  char JSONmsg[137];
+  char tempVal[12];
+  memset(JSONmsg, '\0', 137);
+  memset(tempVal, '\0', 12);
+  const char openJSON[] = "{\"value\":{\"pm10\":";
+  strcat(JSONmsg, openJSON);
+  dtostrf(averages[5], 4, 2, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char open25[] = ",\"pm2.5\":";
+  strcat(JSONmsg, open25);
+  dtostrf(averages[4], 4, 2, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char openHumi[] = ",\"humi\":";
+  strcat(JSONmsg, openHumi);
+  dtostrf(averages[12], 4, 2, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char openTemp[] = ",\"temp\":";
+  strcat(JSONmsg, openTemp);
+  dtostrf(averages[13], 4, 2, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char openBatt[] = ",\"batt\":";
+  strcat(JSONmsg, openBatt);
+  int index = strlen(JSONmsg);
+  if(percentBatt >= 100){
+    JSONmsg[index] = '1';
+    index++;
+    JSONmsg[index] = '0';
+    index++;
+    JSONmsg[index] = '0';
+    index++;
   }
   else{
-    dataStr = String(0);
+    if( percentBatt >= 10){
+      JSONmsg[index] = (percentBatt / 10) + '0';
+      index++;
+    }
+    JSONmsg[index] = (percentBatt % 10) + '0';
+    index++;
   }
-  dataStr += gpsStr;
-  unsigned int len = dataStr.length();
-  char* dataMsg = new char[len];
-  dataStr.toCharArray(dataMsg, len);
-  MQTT_connect();
-  badDataFeed.publish(dataMsg);
-  Serial.println(badDataMsg);
-  delete badDataMsg;
+  JSONmsg[index] = '\0';
+  const char openError[] = ",\"err\":";
+  strcat(JSONmsg, openError);
+  index = strlen(JSONmsg);
   if(dataFlag){
-    return;
+    JSONmsg[index] = '1';
   }
-  
-  String pm25Str = String(averages[4], 2);
-  pm25Str += gpsStr;
-  len = pm25Str.length();
-  char pm25Msg[len];
-  pm25Str.toCharArray(pm25Msg, len);
-  delete &pm25Str;
-  MQTT_connect();
-  dataSent = airDataPM2_5.publish(pm25Msg);
-  Serial.println(pm25Msg);
-  delete pm25Msg;
-  
-  String pm10Str = String(averages[5], 2);
-  pm10Str += gpsStr;
-  len = pm10Str.length();
-  char pm10Msg[len];
-  pm10Str.toCharArray(pm10Msg, len);
-  delete &pm10Str;
-  MQTT_connect();
-  dataSent = airDataPM10.publish(pm10Msg) && dataSent;
-  Serial.println(pm10Msg);
-  delete pm10Msg;
-  
-  String humiStr = String(averages[12], 2);
-  humiStr += gpsStr;
-  len = humiStr.length();
-  char humiMsg[len];
-  humiStr.toCharArray(humiMsg, len);
-  delete &humiStr;
-  MQTT_connect();
-  dataSent = humidityFeed.publish(humiMsg) && dataSent;
-  Serial.println(humiMsg);
-  delete humiMsg;
-    
-  String tempStr = String(averages[13], 2);
-  tempStr += gpsStr;
-  len = tempStr.length();
-  char tempMsg[len];
-  tempStr.toCharArray(tempMsg, len);
-  delete &tempStr;
-  MQTT_connect();
-  dataSent = temperatureFeed.publish(tempMsg) && dataSent;
-  Serial.println(tempMsg);
-  delete tempMsg;
-  
-  String battStr = String(vBatt);
-  battStr += gpsStr;
-  len = battStr.length();
-  char battMsg[len];
-  battStr.toCharArray(battMsg, len);
-  delete &battStr;
-  MQTT_connect();
-  dataSent = batteryFeed.publish(battMsg) && dataSent;
-  Serial.println(battMsg);
-  delete battMsg;
+  else{
+    JSONmsg[index] = '0';
+  }
+  index++;
+  JSONmsg[index] = '\0';
+  const char openLat[] = "},\"lat\":";
+  strcat(JSONmsg, openLat);
+  dtostrf(latitude, 8, 6, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char openLon[] = ",\"lon\":";
+  strcat(JSONmsg, openLon);
+  dtostrf(longitude, 8, 6, tempVal);
+  strcat(JSONmsg, tempVal);
+  const char openElevation[] = ",\"ele\":";
+  strcat(JSONmsg, openElevation);
+  dtostrf(altitude, 4, 0, tempVal);
+  strcat(JSONmsg, tempVal);
+  index = strlen(JSONmsg);
+  JSONmsg[index] = '}';
+  index++;
+  JSONmsg[index] = '\0';
 
-  delete &gpsStr;
+  bool dataSent = false;
+  do{
+    MQTT_connect();
+    dataSent = airData.publish(JSONmsg);
+    if (!dataSent) txfailures++;
+  } while(!dataSent || txfailures >= MAXTXFAILURES); 
   
   if(!dataSent){
     Serial.println(F("Data failed to publish"));
-    txfailures++;
     if (txfailures >= MAXTXFAILURES) {
       Serial.println(F("Resetting Cellular"));
       FONAconnect(F(FONA_APN), F(FONA_USERNAME), F(FONA_PASSWORD));
-      txfailures = 0;
     }
-  } 
+  }
   else {
     Serial.println(F("Sent Data!"));
-    txfailures = 0;
-  }  
+  }
+  txfailures = 0;
 }
 

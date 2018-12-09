@@ -372,67 +372,63 @@ void sendDataToServer(){
   dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
   badDataFeed.publish(dataMsg);
-  Serial.println(badDataMsg);
-  delete badDataMsg;
+  Serial.println(dataMsg);
+  delete dataMsg;
   if(dataFlag){
     return;
   }
   
-  String pm25Str = String(averages[4], 2);
-  pm25Str += gpsStr;
-  len = pm25Str.length();
-  char pm25Msg[len];
-  pm25Str.toCharArray(pm25Msg, len);
-  delete &pm25Str;
+  dataStr = String(averages[4], 2);
+  dataStr += gpsStr;
+  len = dataStr.length();
+  dataMsg = new char[len];
+  dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
-  dataSent = airDataPM2_5.publish(pm25Msg);
-  Serial.println(pm25Msg);
-  delete pm25Msg;
+  dataSent = airDataPM2_5.publish(dataMsg);
+  Serial.println(dataMsg);
+  delete dataMsg;
   
-  String pm10Str = String(averages[5], 2);
-  pm10Str += gpsStr;
-  len = pm10Str.length();
-  char pm10Msg[len];
-  pm10Str.toCharArray(pm10Msg, len);
-  delete &pm10Str;
+  dataStr = String(averages[5], 2);
+  dataStr += gpsStr;
+  len = dataStr.length();
+  dataMsg = new char[len];
+  dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
-  dataSent = airDataPM10.publish(pm10Msg) && dataSent;
-  Serial.println(pm10Msg);
-  delete pm10Msg;
+  dataSent = airDataPM10.publish(dataMsg) && dataSent;
+  Serial.println(dataMsg);
+  delete dataMsg;
   
-  String humiStr = String(averages[12], 2);
-  humiStr += gpsStr;
-  len = humiStr.length();
-  char humiMsg[len];
-  humiStr.toCharArray(humiMsg, len);
-  delete &humiStr;
+  dataStr = String(averages[12], 2);
+  dataStr += gpsStr;
+  len = dataStr.length();
+  dataMsg = new char[len];
+  dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
-  dataSent = humidityFeed.publish(humiMsg) && dataSent;
-  Serial.println(humiMsg);
-  delete humiMsg;
+  dataSent = humidityFeed.publish(dataMsg) && dataSent;
+  Serial.println(dataMsg);
+  delete dataMsg;
     
-  String tempStr = String(averages[13], 2);
-  tempStr += gpsStr;
-  len = tempStr.length();
-  char tempMsg[len];
-  tempStr.toCharArray(tempMsg, len);
-  delete &tempStr;
+  dataStr = String(averages[13], 2);
+  dataStr += gpsStr;
+  len = dataStr.length();
+  dataMsg = new char[len];
+  dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
-  dataSent = temperatureFeed.publish(tempMsg) && dataSent;
-  Serial.println(tempMsg);
-  delete tempMsg;
+  dataSent = temperatureFeed.publish(dataMsg) && dataSent;
+  Serial.println(dataMsg);
+  delete dataMsg;
   
-  String battStr = String(vBatt);
-  battStr += gpsStr;
-  len = battStr.length();
-  char battMsg[len];
-  battStr.toCharArray(battMsg, len);
-  delete &battStr;
+  dataStr = String(vBatt);
+  dataStr += gpsStr;
+  len = dataStr.length();
+  dataMsg = new char[len];
+  dataStr.toCharArray(dataMsg, len);
   MQTT_connect();
-  dataSent = batteryFeed.publish(battMsg) && dataSent;
-  Serial.println(battMsg);
-  delete battMsg;
+  dataSent = batteryFeed.publish(dataMsg) && dataSent;
+  Serial.println(dataMsg);
+  delete dataMsg;
 
+  delete &dataStr;
   delete &gpsStr;
   
   if(!dataSent){
